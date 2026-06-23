@@ -85,6 +85,7 @@ class ClaudeIntegration:
                 response = await self._execute(
                     prompt=prompt,
                     working_directory=working_directory,
+                    user_id=user_id,
                     session_id=claude_session_id,
                     continue_session=should_continue,
                     stream_callback=on_stream,
@@ -111,6 +112,7 @@ class ClaudeIntegration:
                     response = await self._execute(
                         prompt=prompt,
                         working_directory=working_directory,
+                        user_id=user_id,
                         session_id=None,
                         continue_session=False,
                         stream_callback=on_stream,
@@ -156,6 +158,7 @@ class ClaudeIntegration:
         self,
         prompt: str,
         working_directory: Path,
+        user_id: int = 0,
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
@@ -166,6 +169,7 @@ class ClaudeIntegration:
         return await self.sdk_manager.execute_command(
             prompt=prompt,
             working_directory=working_directory,
+            user_id=user_id,
             session_id=session_id,
             continue_session=continue_session,
             stream_callback=stream_callback,

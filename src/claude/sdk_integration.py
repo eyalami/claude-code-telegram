@@ -272,6 +272,7 @@ class ClaudeSDKManager:
         self,
         prompt: str,
         working_directory: Path,
+        user_id: int = 0,
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
@@ -298,6 +299,7 @@ class ClaudeSDKManager:
 
             # Build system prompt, loading CLAUDE.md from working directory if present
             base_prompt = (
+                f"Current user ID: {user_id}\n"
                 f"All file operations must stay within {working_directory}. "
                 "Use relative paths."
             )
