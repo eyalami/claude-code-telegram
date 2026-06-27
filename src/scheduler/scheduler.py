@@ -83,6 +83,7 @@ class JobScheduler:
                 "skill_name": skill_name,
             },
             name=job_name,
+            misfire_grace_time=21600,
         )
 
         # Persist to database
@@ -185,6 +186,7 @@ class JobScheduler:
                         id=row_dict["job_id"],
                         name=row_dict["job_name"],
                         replace_existing=True,
+                        misfire_grace_time=21600,
                     )
                     logger.debug(
                         "Loaded scheduled job from DB",
