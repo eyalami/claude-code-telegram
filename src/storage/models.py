@@ -311,3 +311,39 @@ class UserTokenModel:
         if not self.expires_at:
             return False
         return datetime.now(UTC) > self.expires_at
+
+
+@dataclass
+class InviteTokenModel:
+    """One-time invite token for new user self-join via Telegram deep link."""
+
+    token: str
+    created_by: int
+    expires_at: datetime
+    token_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    used_by: Optional[int] = None
+    used_at: Optional[datetime] = None
+    is_used: bool = False
+    note: Optional[str] = None
+
+    def is_expired(self) -> bool:
+        return datetime.now(UTC) > self.expires_at
+
+    def is_valid(self) -> bool:
+        return not self.is_used and not self.is_expired()
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        for key in ["created_at", "expires_at", "used_at"]:
+            if data[key]:
+                data[key] = data[key].isoformat()
+        return data
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "InviteTokenModel":
+        data = dict(row)
+        for field in ["created_at", "expires_at", "used_at"]:
+            data[field] = _parse_datetime(data.get(field))
+        data["is_used"] = bool(data.get("is_used", False))
+        return cls(**data)

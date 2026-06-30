@@ -288,3 +288,9 @@ class TestStorageFacade:
         assert "users" in dashboard
         assert len(dashboard["users"]) >= 1
         assert dashboard["system_stats"]["overall"]["total_users"] >= 1
+
+    async def test_storage_exposes_invites_repository(self, storage) -> None:
+        """storage.invites must be set and be an InviteTokenRepository."""
+        from src.storage.repositories import InviteTokenRepository
+        assert hasattr(storage, "invites"), "Storage must expose an 'invites' attribute"
+        assert isinstance(storage.invites, InviteTokenRepository)

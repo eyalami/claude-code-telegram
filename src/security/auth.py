@@ -213,6 +213,40 @@ class TokenAuthProvider(AuthProvider):
         return self._hash_token(token) == stored_hash
 
 
+class DatabaseAuthProvider(AuthProvider):
+    """Checks users.is_allowed in SQLite — no restart needed when users are added or removed."""
+
+    def __init__(self, db_manager: Any) -> None:
+        self._db = db_manager
+        logger.info("Database auth provider initialized")
+
+    async def authenticate(self, user_id: int, credentials: Dict[str, Any]) -> bool:
+        async with self._db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT is_allowed FROM users WHERE user_id = ?", (user_id,)
+            )
+            row = await cursor.fetchone()
+            result = bool(row and row[0])
+        logger.info("Database auth check", user_id=user_id, allowed=result)
+        return result
+
+    async def get_user_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+        async with self._db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT user_id, telegram_username, is_allowed FROM users WHERE user_id = ? AND is_allowed = TRUE",
+                (user_id,),
+            )
+            row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "user_id": row[0],
+            "telegram_username": row[1],
+            "auth_type": "database",
+            "permissions": ["basic"],
+        }
+
+
 class AuthenticationManager:
     """Main authentication manager supporting multiple providers."""
 

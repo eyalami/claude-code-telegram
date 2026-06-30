@@ -21,6 +21,7 @@ from .repositories import (
     AnalyticsRepository,
     AuditLogRepository,
     CostTrackingRepository,
+    InviteTokenRepository,
     MessageRepository,
     ProjectThreadRepository,
     SessionRepository,
@@ -45,6 +46,7 @@ class Storage:
         self.audit = AuditLogRepository(self.db_manager)
         self.costs = CostTrackingRepository(self.db_manager)
         self.analytics = AnalyticsRepository(self.db_manager)
+        self.invites = InviteTokenRepository(self.db_manager)
 
     async def initialize(self):
         """Initialize storage system."""

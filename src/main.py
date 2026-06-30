@@ -29,6 +29,7 @@ from src.scheduler.scheduler import JobScheduler
 from src.security.audit import AuditLogger, InMemoryAuditStorage
 from src.security.auth import (
     AuthenticationManager,
+    DatabaseAuthProvider,
     InMemoryTokenStorage,
     TokenAuthProvider,
     WhitelistAuthProvider,
@@ -114,6 +115,9 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     if config.enable_token_auth:
         token_storage = InMemoryTokenStorage()  # TODO: Use database storage
         providers.append(TokenAuthProvider(config.auth_token_secret, token_storage))
+
+    # Always add database provider — checks users.is_allowed, no restart needed
+    providers.append(DatabaseAuthProvider(storage.db_manager))
 
     # Fall back to allowing all users in development mode
     if not providers and config.development_mode:

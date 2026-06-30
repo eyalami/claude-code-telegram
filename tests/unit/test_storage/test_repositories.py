@@ -8,6 +8,7 @@ import pytest
 
 from src.storage.database import DatabaseManager
 from src.storage.models import (
+    InviteTokenModel,
     MessageModel,
     ProjectThreadModel,
     SessionModel,
@@ -17,6 +18,7 @@ from src.storage.models import (
 from src.storage.repositories import (
     AnalyticsRepository,
     AuditLogRepository,
+    InviteTokenRepository,
     MessageRepository,
     ProjectThreadRepository,
     SessionRepository,
@@ -535,3 +537,123 @@ class TestAnalyticsRepository:
         assert stats["overall"]["total_sessions"] >= 1
         assert stats["overall"]["total_messages"] >= 3
         assert stats["overall"]["total_cost"] >= 0.3
+
+
+ADMIN_ID = 1712495377
+
+
+@pytest.fixture
+async def invite_repo(db_manager):
+    """Create invite token repository with admin user pre-seeded (FK requirement)."""
+    user_repo = UserRepository(db_manager)
+    await user_repo.create_user(
+        UserModel(user_id=ADMIN_ID, telegram_username="admin", is_allowed=True)
+    )
+    return InviteTokenRepository(db_manager)
+
+
+class TestInviteTokenModel:
+    """Tests for InviteTokenModel helper methods."""
+
+    def test_is_expired_when_past_expiry(self):
+        token = InviteTokenModel(
+            token="abc",
+            created_by=ADMIN_ID,
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+        assert token.is_expired()
+
+    def test_not_expired_when_future_expiry(self):
+        token = InviteTokenModel(
+            token="abc",
+            created_by=ADMIN_ID,
+            expires_at=datetime.now(UTC) + timedelta(hours=72),
+        )
+        assert not token.is_expired()
+
+    def test_is_valid_fresh_unused_token(self):
+        token = InviteTokenModel(
+            token="abc",
+            created_by=ADMIN_ID,
+            expires_at=datetime.now(UTC) + timedelta(hours=72),
+        )
+        assert token.is_valid()
+
+    def test_not_valid_if_used(self):
+        token = InviteTokenModel(
+            token="abc",
+            created_by=ADMIN_ID,
+            expires_at=datetime.now(UTC) + timedelta(hours=72),
+            is_used=True,
+        )
+        assert not token.is_valid()
+
+    def test_not_valid_if_expired(self):
+        token = InviteTokenModel(
+            token="abc",
+            created_by=ADMIN_ID,
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+        assert not token.is_valid()
+
+
+class TestInviteTokenRepository:
+    """Tests for InviteTokenRepository DB operations."""
+
+    async def test_create_and_get_token(self, invite_repo):
+        token = InviteTokenModel(
+            token="tok_create_test",
+            created_by=ADMIN_ID,
+            expires_at=datetime.now(UTC) + timedelta(hours=72),
+            note="create test",
+        )
+        created = await invite_repo.create_token(token)
+        assert created.token_id is not None
+
+        fetched = await invite_repo.get_by_token("tok_create_test")
+        assert fetched is not None
+        assert fetched.token == "tok_create_test"
+        assert fetched.note == "create test"
+        assert fetched.is_used is False
+        assert fetched.used_by is None
+
+    async def test_get_nonexistent_token_returns_none(self, invite_repo):
+        result = await invite_repo.get_by_token("this_does_not_exist")
+        assert result is None
+
+    async def test_mark_used_sets_fields(self, invite_repo):
+        token = InviteTokenModel(
+            token="tok_mark_used",
+            created_by=ADMIN_ID,
+            expires_at=datetime.now(UTC) + timedelta(hours=72),
+        )
+        created = await invite_repo.create_token(token)
+
+        await invite_repo.mark_used(created.token_id, used_by=88888)
+
+        fetched = await invite_repo.get_by_token("tok_mark_used")
+        assert fetched.is_used is True
+        assert fetched.used_by == 88888
+        assert fetched.used_at is not None
+
+    async def test_list_tokens_returns_all(self, invite_repo):
+        for i in range(3):
+            await invite_repo.create_token(
+                InviteTokenModel(
+                    token=f"tok_list_{i}",
+                    created_by=ADMIN_ID,
+                    expires_at=datetime.now(UTC) + timedelta(hours=72),
+                )
+            )
+        tokens = await invite_repo.list_tokens()
+        assert len(tokens) == 3
+
+    async def test_duplicate_token_raises(self, invite_repo):
+        token = InviteTokenModel(
+            token="tok_unique",
+            created_by=ADMIN_ID,
+            expires_at=datetime.now(UTC) + timedelta(hours=72),
+        )
+        await invite_repo.create_token(token)
+        with pytest.raises(Exception):
+            await invite_repo.create_token(token)

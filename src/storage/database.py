@@ -310,6 +310,29 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- One-time invite tokens for new user self-join via Telegram deep link
+                CREATE TABLE IF NOT EXISTS invite_tokens (
+                    token_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token      TEXT      NOT NULL UNIQUE,
+                    created_by INTEGER   NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL,
+                    used_by    INTEGER,
+                    used_at    TIMESTAMP,
+                    is_used    BOOLEAN   DEFAULT FALSE,
+                    note       TEXT,
+                    FOREIGN KEY (created_by) REFERENCES users(user_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_invite_tokens_token
+                    ON invite_tokens(token);
+                CREATE INDEX IF NOT EXISTS idx_invite_tokens_is_used
+                    ON invite_tokens(is_used);
+                """,
+            ),
         ]
 
     async def _init_pool(self):

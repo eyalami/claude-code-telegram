@@ -1,17 +1,23 @@
 """Tests for authentication system."""
 
+import tempfile
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from src.exceptions import SecurityError
 from src.security.auth import (
     AuthenticationManager,
+    DatabaseAuthProvider,
     InMemoryTokenStorage,
     TokenAuthProvider,
     UserSession,
     WhitelistAuthProvider,
 )
+from src.storage.database import DatabaseManager
+from src.storage.models import UserModel
+from src.storage.repositories import UserRepository
 
 
 class TestUserSession:
@@ -194,6 +200,63 @@ class TestTokenAuthProvider:
         # Should fail after revocation
         result = await provider.authenticate(user_id, {"token": token})
         assert result is False
+
+
+class TestDatabaseAuthProvider:
+    """Tests for DatabaseAuthProvider — checks users.is_allowed in DB."""
+
+    @pytest.fixture
+    async def db_manager(self, tmp_path: Path):
+        db_path = tmp_path / "test_auth.db"
+        manager = DatabaseManager(f"sqlite:///{db_path}")
+        await manager.initialize()
+        yield manager
+        await manager.close()
+
+    @pytest.fixture
+    async def db_with_users(self, db_manager):
+        repo = UserRepository(db_manager)
+        await repo.create_user(UserModel(user_id=111, telegram_username="allowed", is_allowed=True))
+        await repo.create_user(UserModel(user_id=222, telegram_username="disallowed", is_allowed=False))
+        return db_manager
+
+    async def test_allows_user_with_is_allowed_true(self, db_with_users):
+        provider = DatabaseAuthProvider(db_with_users)
+        assert await provider.authenticate(111, {}) is True
+
+    async def test_rejects_user_with_is_allowed_false(self, db_with_users):
+        provider = DatabaseAuthProvider(db_with_users)
+        assert await provider.authenticate(222, {}) is False
+
+    async def test_rejects_unknown_user_not_in_db(self, db_with_users):
+        provider = DatabaseAuthProvider(db_with_users)
+        assert await provider.authenticate(999, {}) is False
+
+    async def test_get_user_info_returns_data_for_allowed(self, db_with_users):
+        provider = DatabaseAuthProvider(db_with_users)
+        info = await provider.get_user_info(111)
+        assert info is not None
+        assert info["user_id"] == 111
+        assert info["auth_type"] == "database"
+        assert "permissions" in info
+
+    async def test_get_user_info_returns_none_for_unknown(self, db_with_users):
+        provider = DatabaseAuthProvider(db_with_users)
+        assert await provider.get_user_info(999) is None
+
+    async def test_get_user_info_returns_none_for_disallowed(self, db_with_users):
+        provider = DatabaseAuthProvider(db_with_users)
+        assert await provider.get_user_info(222) is None
+
+    async def test_auth_manager_falls_through_to_database_provider(self, db_with_users):
+        """WhitelistAuthProvider misses user 111, DatabaseAuthProvider catches it."""
+        whitelist = WhitelistAuthProvider(allowed_users=[9999])
+        db_provider = DatabaseAuthProvider(db_with_users)
+        manager = AuthenticationManager([whitelist, db_provider])
+
+        result = await manager.authenticate_user(111)
+        assert result is True
+        assert manager.is_authenticated(111)
 
 
 class TestAuthenticationManager:

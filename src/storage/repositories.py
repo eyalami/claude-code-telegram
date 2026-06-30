@@ -16,6 +16,7 @@ from .database import DatabaseManager
 from .models import (
     AuditLogModel,
     CostTrackingModel,
+    InviteTokenModel,
     MessageModel,
     ProjectThreadModel,
     SessionModel,
@@ -829,3 +830,57 @@ class AnalyticsRepository:
                 "tool_stats": tool_stats,
                 "daily_activity": daily_activity,
             }
+
+
+class InviteTokenRepository:
+    """Invite token data access — one-time join tokens for new users."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def create_token(self, token: InviteTokenModel) -> InviteTokenModel:
+        """Insert a new invite token and return it with token_id set."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO invite_tokens (token, created_by, expires_at, note)
+                VALUES (?, ?, ?, ?)
+                """,
+                (token.token, token.created_by, token.expires_at, token.note),
+            )
+            await conn.commit()
+            token.token_id = cursor.lastrowid
+            logger.info("Invite token created", token_id=token.token_id, created_by=token.created_by)
+            return token
+
+    async def get_by_token(self, token_str: str) -> Optional[InviteTokenModel]:
+        """Look up a token by its string value. Returns None if not found."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM invite_tokens WHERE token = ?", (token_str,)
+            )
+            row = await cursor.fetchone()
+            return InviteTokenModel.from_row(row) if row else None
+
+    async def mark_used(self, token_id: int, used_by: int) -> None:
+        """Atomically mark a token as used."""
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE invite_tokens
+                SET is_used = TRUE, used_by = ?, used_at = CURRENT_TIMESTAMP
+                WHERE token_id = ?
+                """,
+                (used_by, token_id),
+            )
+            await conn.commit()
+            logger.info("Invite token marked used", token_id=token_id, used_by=used_by)
+
+    async def list_tokens(self) -> List[InviteTokenModel]:
+        """Return all tokens ordered by creation time descending."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM invite_tokens ORDER BY created_at DESC"
+            )
+            rows = await cursor.fetchall()
+            return [InviteTokenModel.from_row(row) for row in rows]

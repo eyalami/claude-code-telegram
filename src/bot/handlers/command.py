@@ -48,6 +48,94 @@ def _is_private_chat(update: Update) -> bool:
     return bool(chat and getattr(chat, "type", "") == "private")
 
 
+async def _handle_invite_token(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, token_str: str
+) -> bool:
+    """Validate and redeem an invite token. Returns True if handled (success or rejection)."""
+    from ...storage.facade import Storage
+
+    user = update.effective_user
+    storage: Storage = context.bot_data.get("storage")
+    if not storage:
+        await update.message.reply_text("Bot storage unavailable. Contact admin.")
+        return True
+
+    token = await storage.invites.get_by_token(token_str)
+
+    if token is None:
+        await update.message.reply_text(
+            "This invite link is not valid. Ask your admin for a new one."
+        )
+        return True
+
+    if not token.is_valid():
+        if token.is_used:
+            await update.message.reply_text(
+                "This invite link has already been used. Each link works once only.\n"
+                "Ask your admin for a new one."
+            )
+        else:
+            await update.message.reply_text(
+                "This invite link has expired. Ask your admin for a new one."
+            )
+        return True
+
+    # Valid — redeem atomically, then provision
+    await storage.invites.mark_used(token.token_id, used_by=user.id)
+    await storage.users.get_or_create_user(user.id, user.username)
+    await storage.users.set_user_allowed(user.id, True)
+
+    # Provision BRIA user directories
+    bria_users_root = Path(context.bot_data["settings"].approved_directory) / "users" / str(user.id)
+    for subdir in ["logs", "plans/archive", "programmes"]:
+        (bria_users_root / subdir).mkdir(parents=True, exist_ok=True)
+
+    # Write empty profile.json if it doesn't exist
+    profile_path = bria_users_root / "profile.json"
+    if not profile_path.exists():
+        import json as _json
+        profile_path.write_text(_json.dumps({
+            "meta": {"user_id": user.id, "language": "he", "joined": ""},
+            "personal": {},
+            "biometrics": {},
+            "goals": {},
+            "constraints": {},
+            "preferences": {},
+            "pillars": {},
+        }, indent=2))
+
+    # Append to admin/users.json
+    admin_users_path = Path(context.bot_data["settings"].approved_directory) / "admin" / "users.json"
+    if admin_users_path.exists():
+        import json as _json
+        try:
+            users_data = _json.loads(admin_users_path.read_text())
+            if isinstance(users_data, list):
+                if not any(u.get("user_id") == user.id for u in users_data):
+                    users_data.append({
+                        "user_id": user.id,
+                        "chat_id": update.effective_chat.id,
+                        "username": user.username,
+                        "role": "user",
+                        "label": token.note or user.first_name or str(user.id),
+                        "joined": datetime.now(timezone.utc).date().isoformat(),
+                    })
+                    admin_users_path.write_text(_json.dumps(users_data, indent=2, ensure_ascii=False))
+        except Exception:
+            pass  # users.json write failure is non-fatal
+
+    # Append to audit.log
+    audit_path = Path(context.bot_data["settings"].approved_directory) / "admin" / "audit.log"
+    try:
+        with open(audit_path, "a") as f:
+            f.write(f"[{datetime.now(timezone.utc).isoformat()}] {user.id} user_joined invite_token={token.token_id}\n")
+    except Exception:
+        pass
+
+    logger.info("New user joined via invite token", user_id=user.id, token_id=token.token_id)
+    return False  # Let normal /start welcome flow continue
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     user = update.effective_user
@@ -55,6 +143,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     audit_logger: AuditLogger = context.bot_data.get("audit_logger")
     manager = context.bot_data.get("project_threads_manager")
     sync_section = ""
+
+    # Handle invite token deep link: /start <token>
+    if context.args:
+        handled = await _handle_invite_token(update, context, context.args[0])
+        if handled:
+            return
 
     if settings.enable_project_threads and settings.project_threads_mode == "private":
         if not _is_private_chat(update):
