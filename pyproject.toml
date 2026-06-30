@@ -82,8 +82,14 @@ line_length = 88
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
-addopts = "-v --cov=src --cov-report=html --cov-report=term-missing"
+addopts = "-v --strict-markers --cov=src --cov-report=html --cov-report=term-missing"
 asyncio_mode = "auto"
+markers = [
+    "sanity: critical-path smoke tests (fast, no external calls)",
+    "regression: one test per fixed bug — filename references the issue",
+    "integration: full pipeline tests (may use real SQLite, mocked Claude)",
+    "slow: tests that take >5s",
+]
 
 [tool.mypy]
 python_version = "3.11"
