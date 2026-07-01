@@ -333,6 +333,18 @@ class DatabaseManager:
                     ON invite_tokens(is_used);
                 """,
             ),
+            (
+                6,
+                """
+                -- Per-user token tracking: add input/output tokens to cost_tracking and messages
+                ALTER TABLE cost_tracking ADD COLUMN input_tokens INTEGER DEFAULT 0;
+                ALTER TABLE cost_tracking ADD COLUMN output_tokens INTEGER DEFAULT 0;
+                ALTER TABLE cost_tracking ADD COLUMN threshold_alerted_date DATE;
+
+                ALTER TABLE messages ADD COLUMN input_tokens INTEGER DEFAULT 0;
+                ALTER TABLE messages ADD COLUMN output_tokens INTEGER DEFAULT 0;
+                """,
+            ),
         ]
 
     async def _init_pool(self):

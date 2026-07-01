@@ -92,6 +92,8 @@ class Storage:
             cost=response.cost,
             duration_ms=response.duration_ms,
             error=response.error_type if response.is_error else None,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
         )
 
         message_id = await self.messages.save_message(message)
@@ -111,8 +113,13 @@ class Storage:
                 )
                 await self.tools.save_tool_usage(tool_usage)
 
-        # Update cost tracking
-        await self.costs.update_daily_cost(user_id, response.cost)
+        # Update cost and token tracking
+        await self.costs.update_daily_cost(
+            user_id,
+            response.cost,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+        )
 
         # Update user stats
         user = await self.users.get_user(user_id)

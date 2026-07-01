@@ -151,6 +151,8 @@ class MessageModel:
     cost: float = 0.0
     duration_ms: Optional[int] = None
     error: Optional[str] = None
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -262,6 +264,9 @@ class CostTrackingModel:
     date: str  # ISO date format (YYYY-MM-DD)
     daily_cost: float = 0.0
     request_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    threshold_alerted_date: Optional[str] = None
     id: Optional[int] = None
 
     @classmethod
@@ -272,6 +277,10 @@ class CostTrackingModel:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return asdict(self)
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 @dataclass

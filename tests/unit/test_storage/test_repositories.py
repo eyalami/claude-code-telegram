@@ -18,6 +18,7 @@ from src.storage.models import (
 from src.storage.repositories import (
     AnalyticsRepository,
     AuditLogRepository,
+    CostTrackingRepository,
     InviteTokenRepository,
     MessageRepository,
     ProjectThreadRepository,
@@ -657,3 +658,56 @@ class TestInviteTokenRepository:
         await invite_repo.create_token(token)
         with pytest.raises(Exception):
             await invite_repo.create_token(token)
+
+
+@pytest.fixture
+async def cost_repo(db_manager):
+    """Create cost tracking repository with a seeded user."""
+    user_repo = UserRepository(db_manager)
+    await user_repo.create_user(UserModel(user_id=99001, telegram_username="costuser", is_allowed=True))
+    return CostTrackingRepository(db_manager)
+
+
+class TestCostTrackingRepositoryTokens:
+    """CostTrackingRepository must accumulate input/output tokens per user per day."""
+
+    async def test_update_stores_input_tokens(self, cost_repo):
+        await cost_repo.update_daily_cost(99001, cost=0.01, input_tokens=300, output_tokens=100)
+        row = await cost_repo.get_daily_usage(99001, "2026-07-01")
+        assert row is not None
+        assert row.input_tokens == 300
+
+    async def test_update_stores_output_tokens(self, cost_repo):
+        await cost_repo.update_daily_cost(99001, cost=0.01, input_tokens=300, output_tokens=100)
+        row = await cost_repo.get_daily_usage(99001, "2026-07-01")
+        assert row.output_tokens == 100
+
+    async def test_tokens_accumulate_across_calls(self, cost_repo):
+        await cost_repo.update_daily_cost(99001, cost=0.01, input_tokens=200, output_tokens=50, date="2026-07-01")
+        await cost_repo.update_daily_cost(99001, cost=0.02, input_tokens=100, output_tokens=75, date="2026-07-01")
+        row = await cost_repo.get_daily_usage(99001, "2026-07-01")
+        assert row.input_tokens == 300
+        assert row.output_tokens == 125
+
+    async def test_tokens_default_zero_when_not_provided(self, cost_repo):
+        await cost_repo.update_daily_cost(99001, cost=0.01)
+        rows = await cost_repo.get_user_daily_costs(99001, days=7)
+        assert len(rows) == 1
+        assert rows[0].input_tokens == 0
+        assert rows[0].output_tokens == 0
+
+    async def test_get_daily_usage_returns_none_for_unknown_date(self, cost_repo):
+        result = await cost_repo.get_daily_usage(99001, "2099-01-01")
+        assert result is None
+
+    async def test_threshold_not_alerted_initially(self, cost_repo):
+        await cost_repo.update_daily_cost(99001, cost=0.01, input_tokens=100, output_tokens=50)
+        row = await cost_repo.get_daily_usage(99001)
+        assert row.threshold_alerted_date is None
+
+    async def test_mark_threshold_alerted(self, cost_repo):
+        await cost_repo.update_daily_cost(99001, cost=0.01, input_tokens=100, output_tokens=50)
+        row = await cost_repo.get_daily_usage(99001)
+        await cost_repo.mark_threshold_alerted(99001)
+        row = await cost_repo.get_daily_usage(99001)
+        assert row.threshold_alerted_date is not None

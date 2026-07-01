@@ -397,8 +397,8 @@ class MessageRepository:
                 """
                 INSERT INTO messages
                 (session_id, user_id, timestamp, prompt,
-                 response, cost, duration_ms, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 response, cost, duration_ms, error, input_tokens, output_tokens)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     message.session_id,
@@ -409,6 +409,8 @@ class MessageRepository:
                     message.cost,
                     message.duration_ms,
                     message.error,
+                    message.input_tokens,
+                    message.output_tokens,
                 ),
             )
             await conn.commit()
@@ -617,22 +619,62 @@ class CostTrackingRepository:
         """Initialize repository."""
         self.db = db_manager
 
-    async def update_daily_cost(self, user_id: int, cost: float, date: str = None):
-        """Update daily cost for user."""
+    async def update_daily_cost(
+        self,
+        user_id: int,
+        cost: float,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        date: Optional[str] = None,
+    ):
+        """Update daily cost and token counts for user."""
         if not date:
             date = datetime.now(UTC).strftime("%Y-%m-%d")
 
         async with self.db.get_connection() as conn:
             await conn.execute(
                 """
-                INSERT INTO cost_tracking (user_id, date, daily_cost, request_count)
-                VALUES (?, ?, ?, 1)
+                INSERT INTO cost_tracking
+                    (user_id, date, daily_cost, request_count, input_tokens, output_tokens)
+                VALUES (?, ?, ?, 1, ?, ?)
                 ON CONFLICT(user_id, date)
                 DO UPDATE SET
                     daily_cost = daily_cost + ?,
-                    request_count = request_count + 1
-            """,
-                (user_id, date, cost, cost),
+                    request_count = request_count + 1,
+                    input_tokens = input_tokens + ?,
+                    output_tokens = output_tokens + ?
+                """,
+                (user_id, date, cost, input_tokens, output_tokens, cost, input_tokens, output_tokens),
+            )
+            await conn.commit()
+
+    async def get_daily_usage(
+        self, user_id: int, date: Optional[str] = None
+    ) -> Optional[CostTrackingModel]:
+        """Get cost/token row for a specific user+date (defaults to today)."""
+        if not date:
+            date = datetime.now(UTC).strftime("%Y-%m-%d")
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM cost_tracking WHERE user_id = ? AND date = ?",
+                (user_id, date),
+            )
+            row = await cursor.fetchone()
+            return CostTrackingModel.from_row(row) if row else None
+
+    async def mark_threshold_alerted(
+        self, user_id: int, date: Optional[str] = None
+    ) -> None:
+        """Record that the threshold alert was sent for this user today."""
+        today = date or datetime.now(UTC).strftime("%Y-%m-%d")
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE cost_tracking
+                SET threshold_alerted_date = ?
+                WHERE user_id = ? AND date = ?
+                """,
+                (today, user_id, today),
             )
             await conn.commit()
 

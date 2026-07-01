@@ -22,6 +22,7 @@ from src.claude.sdk_integration import (
     StreamUpdate,
     _make_can_use_tool_callback,
 )
+from src.config import create_test_config
 from src.config.settings import Settings
 
 
@@ -1184,3 +1185,65 @@ class TestClaudeMdLoading:
 
         opts = captured[0]
         assert opts.setting_sources == ["project"]
+
+
+# ---------------------------------------------------------------------------
+# Token fields on ClaudeResponse (#38)
+# ---------------------------------------------------------------------------
+
+class TestClaudeResponseTokenFields:
+    """ClaudeResponse must carry input/output token counts from the SDK."""
+
+    def test_claude_response_has_input_tokens_field(self):
+        r = ClaudeResponse(content="hi", session_id="s1", cost=0.01, duration_ms=100, num_turns=1)
+        assert hasattr(r, "input_tokens")
+        assert r.input_tokens == 0
+
+    def test_claude_response_has_output_tokens_field(self):
+        r = ClaudeResponse(content="hi", session_id="s1", cost=0.01, duration_ms=100, num_turns=1)
+        assert hasattr(r, "output_tokens")
+        assert r.output_tokens == 0
+
+    async def test_tokens_extracted_from_result_message_usage(self, tmp_path):
+        """SDK result with usage dict → tokens populated on ClaudeResponse."""
+        result = _make_result_message(
+            usage={"input_tokens": 500, "output_tokens": 150},
+        )
+        msg = _make_assistant_message("done")
+        config = create_test_config(
+            approved_directory=str(tmp_path),
+            claude_allowed_tools=["Read"],
+        )
+        manager = ClaudeSDKManager(config)
+        with patch("src.claude.sdk_integration.ClaudeSDKClient", _mock_client_factory(msg, result)):
+            response = await manager.execute_command(prompt="test prompt", working_directory=tmp_path)
+        assert response.input_tokens == 500
+        assert response.output_tokens == 150
+
+    async def test_tokens_zero_when_usage_is_none(self, tmp_path):
+        """ResultMessage with usage=None → tokens default to 0, no crash."""
+        result = _make_result_message(usage=None)
+        msg = _make_assistant_message("done")
+        config = create_test_config(
+            approved_directory=str(tmp_path),
+            claude_allowed_tools=["Read"],
+        )
+        manager = ClaudeSDKManager(config)
+        with patch("src.claude.sdk_integration.ClaudeSDKClient", _mock_client_factory(msg, result)):
+            response = await manager.execute_command(prompt="test prompt", working_directory=tmp_path)
+        assert response.input_tokens == 0
+        assert response.output_tokens == 0
+
+    async def test_tokens_zero_when_usage_missing_keys(self, tmp_path):
+        """usage dict without expected keys → graceful fallback to 0."""
+        result = _make_result_message(usage={"some_other_key": 99})
+        msg = _make_assistant_message("done")
+        config = create_test_config(
+            approved_directory=str(tmp_path),
+            claude_allowed_tools=["Read"],
+        )
+        manager = ClaudeSDKManager(config)
+        with patch("src.claude.sdk_integration.ClaudeSDKClient", _mock_client_factory(msg, result)):
+            response = await manager.execute_command(prompt="test prompt", working_directory=tmp_path)
+        assert response.input_tokens == 0
+        assert response.output_tokens == 0

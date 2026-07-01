@@ -182,3 +182,62 @@ class TestInviteTokenSanity:
         fetched = await invite_repo.get_by_token("sanity_tok_redeem")
         assert fetched is not None
         assert not fetched.is_valid()
+
+
+# ---------------------------------------------------------------------------
+# Token tracking (critical path — per-user cost visibility, issue #38)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.sanity
+class TestTokenTrackingSanity:
+    """Sanity checks for per-user token and cost tracking."""
+
+    @pytest.fixture
+    async def db(self, tmp_path: Path):
+        db_path = tmp_path / "tokens.db"
+        manager = DatabaseManager(f"sqlite:///{db_path}")
+        await manager.initialize()
+        yield manager
+        await manager.close()
+
+    async def test_cost_tracking_has_input_tokens_column(self, db: DatabaseManager) -> None:
+        async with db.get_connection() as conn:
+            cursor = await conn.execute("PRAGMA table_info(cost_tracking)")
+            cols = {row[1] for row in await cursor.fetchall()}
+        assert "input_tokens" in cols, "cost_tracking must have input_tokens column (migration 6)"
+
+    async def test_cost_tracking_has_output_tokens_column(self, db: DatabaseManager) -> None:
+        async with db.get_connection() as conn:
+            cursor = await conn.execute("PRAGMA table_info(cost_tracking)")
+            cols = {row[1] for row in await cursor.fetchall()}
+        assert "output_tokens" in cols, "cost_tracking must have output_tokens column (migration 6)"
+
+    async def test_cost_tracking_has_threshold_alerted_date_column(self, db: DatabaseManager) -> None:
+        async with db.get_connection() as conn:
+            cursor = await conn.execute("PRAGMA table_info(cost_tracking)")
+            cols = {row[1] for row in await cursor.fetchall()}
+        assert "threshold_alerted_date" in cols, "cost_tracking must have threshold_alerted_date column (migration 6)"
+
+    async def test_messages_has_input_tokens_column(self, db: DatabaseManager) -> None:
+        async with db.get_connection() as conn:
+            cursor = await conn.execute("PRAGMA table_info(messages)")
+            cols = {row[1] for row in await cursor.fetchall()}
+        assert "input_tokens" in cols, "messages table must have input_tokens column (migration 6)"
+
+    async def test_messages_has_output_tokens_column(self, db: DatabaseManager) -> None:
+        async with db.get_connection() as conn:
+            cursor = await conn.execute("PRAGMA table_info(messages)")
+            cols = {row[1] for row in await cursor.fetchall()}
+        assert "output_tokens" in cols, "messages table must have output_tokens column (migration 6)"
+
+    async def test_tokens_stored_and_retrieved(self, db: DatabaseManager) -> None:
+        from src.storage.repositories import CostTrackingRepository, UserRepository
+        from src.storage.models import UserModel
+        user_repo = UserRepository(db)
+        await user_repo.create_user(UserModel(user_id=77001, telegram_username="tokenuser", is_allowed=True))
+        cost_repo = CostTrackingRepository(db)
+        await cost_repo.update_daily_cost(77001, cost=0.05, input_tokens=400, output_tokens=120)
+        row = await cost_repo.get_daily_usage(77001)
+        assert row is not None
+        assert row.input_tokens == 400
+        assert row.output_tokens == 120

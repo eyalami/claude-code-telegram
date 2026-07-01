@@ -59,6 +59,8 @@ class ClaudeResponse:
     error_type: Optional[str] = None
     tools_used: List[Dict[str, Any]] = field(default_factory=list)
     interrupted: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 @dataclass
@@ -513,14 +515,19 @@ class ClaudeSDKManager:
                 if last_exc is not None:
                     raise last_exc
 
-            # Extract cost, tools, and session_id from result message
+            # Extract cost, tokens, tools, and session_id from result message
             cost = 0.0
+            input_tokens = 0
+            output_tokens = 0
             tools_used: List[Dict[str, Any]] = []
             claude_session_id = None
             result_content = None
             for message in messages:
                 if isinstance(message, ResultMessage):
                     cost = getattr(message, "total_cost_usd", 0.0) or 0.0
+                    usage = getattr(message, "usage", None) or {}
+                    input_tokens = int(usage.get("input_tokens", 0))
+                    output_tokens = int(usage.get("output_tokens", 0))
                     claude_session_id = getattr(message, "session_id", None)
                     result_content = getattr(message, "result", None)
                     current_time = asyncio.get_event_loop().time()
@@ -607,6 +614,8 @@ class ClaudeSDKManager:
                 ),
                 tools_used=tools_used,
                 interrupted=interrupted,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
 
         except asyncio.TimeoutError:

@@ -327,6 +327,7 @@ class MessageOrchestrator:
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
+            ("usage", self.agentic_usage),
             ("restart", command.restart_command),
         ]
         if self.settings.enable_project_threads:
@@ -1042,6 +1043,10 @@ class MessageOrchestrator:
                     )
                 except Exception as e:
                     logger.warning("Failed to log interaction", error=str(e))
+                try:
+                    await self._check_usage_threshold(context, storage, user_id)
+                except Exception as e:
+                    logger.warning("Usage threshold check failed", error=str(e))
 
             # Format response (no reply_markup — strip keyboards)
             from .utils.formatting import ResponseFormatter
@@ -1539,6 +1544,82 @@ class MessageOrchestrator:
                     )
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
+
+    async def _check_usage_threshold(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        storage: Any,
+        user_id: int,
+    ) -> None:
+        """Send admin alert when a user's daily cost crosses the configured threshold."""
+        import json
+        from pathlib import Path
+
+        config_path = self.settings.approved_directory / "admin" / "config.json"
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+        except Exception:
+            return
+
+        usage_cfg = config.get("usage", {})
+        if not usage_cfg.get("alert_enabled", True):
+            return
+        threshold = float(usage_cfg.get("daily_cost_alert_usd", 1.0))
+
+        row = await storage.costs.get_daily_usage(user_id)
+        if row is None or row.daily_cost < threshold:
+            return
+        if row.threshold_alerted_date is not None:
+            return  # already alerted today
+
+        await storage.costs.mark_threshold_alerted(user_id)
+
+        admin_ids = self.settings.allowed_users or []
+        if not admin_ids:
+            return
+        admin_id = admin_ids[0]
+
+        msg = (
+            f"Usage alert: user {user_id} has spent "
+            f"${row.daily_cost:.4f} today "
+            f"({row.input_tokens:,} in / {row.output_tokens:,} out tokens), "
+            f"crossing the ${threshold:.2f} threshold."
+        )
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=msg)
+        except Exception as e:
+            logger.warning("Failed to send usage alert to admin", error=str(e))
+
+    async def agentic_usage(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Admin command: show per-user cost and token usage for today."""
+        user_id = update.effective_user.id if update.effective_user else None
+        admin_ids = self.settings.allowed_users or []
+        if not admin_ids or user_id != admin_ids[0]:
+            return
+
+        storage = context.bot_data.get("storage")
+        if not storage:
+            await update.effective_message.reply_text("Storage unavailable.")
+            return
+
+        rows = await storage.costs.get_user_daily_costs(user_id, days=7)
+        if not rows:
+            await update.effective_message.reply_text("No usage data yet.")
+            return
+
+        lines = ["<b>Usage (last 7 days)</b>"]
+        for r in rows:
+            lines.append(
+                f"{r.date}: ${r.daily_cost:.4f} "
+                f"| {r.input_tokens:,} in / {r.output_tokens:,} out "
+                f"| {r.request_count} req"
+            )
+        await update.effective_message.reply_text(
+            "\n".join(lines), parse_mode="HTML"
+        )
 
     async def _handle_unknown_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
